@@ -1,0 +1,40 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: spark-preprocessing-app
+spec:
+  serviceAccountName: spark
+  restartPolicy: Never
+  containers:
+    - name: spark-preprocessing-app
+      image: 10.101.10.244:5000/spark-preprocessing-app:v1.0
+      imagePullPolicy: Always
+      env:
+        - name: K8S_MASTER
+          value: "https://10.101.41.193:6443"
+        - name: K8S_SPARK_SRV_ACC
+          value: "spark"
+        - name: DOCKER_IMAGE_REGISTRY
+          value: "10.101.10.244:5000/"
+        - name: SPK_DEPLOY_MODE
+          value: "client"
+        - name: SPK_NUM_EXECUTORS
+          value: "1"
+        - name: SPK_DRIVER_PORT
+          value: "40095"
+        - name: KAFKA_IP
+          value: "10.101.41.255"
+        - name: KAFKA_PORT
+          value: "9092"
+        - name: NETFLOW_INPUT_TOPIC
+          value: "netflow-raw"
+        - name: NETFLOW_OUTPUT_TOPICS
+          value: "netflow-anonymized,netflow-preprocessed,netflow-anonymized-preprocessed"
+        - name: SPARK_APP_NAME
+          value: "Palantir Preprocessing Netflow Application"
+        - name: IP_ANON_ENDPOINT
+          value: "http://ip-anonymization-service.ti-sph:8100/anonymize"
+        - name: IP_ANON_COLS
+          value: "sa,da"
+        - name: BENCHMARK_MODE
+          value: "false"
