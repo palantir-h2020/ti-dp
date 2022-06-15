@@ -1,33 +1,35 @@
 package netflow.utils
 
-import logger.Logger
+import customLogger.CustomLogger
 
-import java.io.BufferedReader
-import java.io.File
-import java.io.FileInputStream
-import java.io.FileReader
-import java.io.IOException
+import java.io._
 import java.util
 import java.util.Properties
+
+
+import scala.util.matching.Regex
+
 import org.apache.commons.net.util.SubnetUtils
+import org.springframework.security.web.util.matcher.IpAddressMatcher
+import com.googlecode.ipv6.IPv6Address
+import com.googlecode.ipv6.IPv6AddressRange
 
 /**
  * Utils class. Provides helpers and initialization functions for the rest components.
  *
- * @param appConfigFile String Path of the app's configuration file.
- * @param ipAnonymizeFile String Path of the file, where IP subnets to be anonymized are saved.
+ * @param appConfigFile          String Path of the app's configuration file.
+ * @param ipAnonymizeFile        String Path of the file, where IP subnets to be anonymized are saved.
  * @param kafkaMessageSchemaFile String Path of file that contains the column order of the netflow csv records.
- *
  * @author Space Hellas S.A.
  * @version 1.0-SNAPSHOT
  * @since 1.0-SNAPSHOT
  */
 @SerialVersionUID(101L)
-class Utils (appConfigFile: String, ipAnonymizeFile: String, kafkaMessageSchemaFile: String) extends Serializable {
+class Utils(appConfigFile: String, ipAnonymizeFile: String, kafkaMessageSchemaFile: String) extends Serializable {
   /**
    * Logger instance.
    */
-  val logger = new Logger()
+  val logger = new CustomLogger()
 
   /**
    * Properties. Load all required app's properties.
@@ -39,6 +41,11 @@ class Utils (appConfigFile: String, ipAnonymizeFile: String, kafkaMessageSchemaF
   private var ipToAnonymize: util.HashSet[String] = new util.HashSet[String]()
   ipToAnonymize.addAll(this.loadIpList(ipAnonymizeFile))
   /**
+   * HashSet[String]. Load all IPv6 addresses, that will be anonymized if found in a netflow record.
+   */
+  private var ipV6ToAnonymize: util.HashSet[String] = new util.HashSet[String]()
+  ipV6ToAnonymize.addAll(this.loadIpV6List(ipAnonymizeFile))
+  /**
    * HashMap[String, Integer]. Load csv schema of Kafka records.
    */
   private val csvSchema: util.HashMap[String, Integer] = this.loadCsvSchema(kafkaMessageSchemaFile)
@@ -46,8 +53,8 @@ class Utils (appConfigFile: String, ipAnonymizeFile: String, kafkaMessageSchemaF
    * Array[Int]. Load columns' indexes in csv schema, that will be anonymized.
    */
   private val colIndexesToAnonymize: Array[Int] = this.loadColsToAnonymize(
-      csvSchema,
-      appProps.getProperty("anonymization.columns").split(",")
+    csvSchema,
+    appProps.getProperty("anonymization.columns").split(",")
   )
 
   /**
@@ -93,7 +100,7 @@ class Utils (appConfigFile: String, ipAnonymizeFile: String, kafkaMessageSchemaF
    * @return HashSet[String] Contains all IP addresses in the loaded subnets. These will be anonymized if found.
    */
   def loadIpList(ipListFilename: String): util.HashSet[String] = {
-    logger.info("Loading list with IP addresses that will be anonymized during preprocessing stage from file " + ipListFilename + ".")
+    logger.info("Loading list with IPv4 addresses that will be anonymized during preprocessing stage from file " + ipListFilename + ".")
 
     val ipBucket: util.HashSet[String] = new util.HashSet[String]
     try {
@@ -101,43 +108,52 @@ class Utils (appConfigFile: String, ipAnonymizeFile: String, kafkaMessageSchemaF
 
       var line: String = null
       val bufferedReader: BufferedReader = new BufferedReader(new FileReader(new File(ipListFilename)))
-      while ({
-          line = bufferedReader.readLine; line != null
+      while ( {
+        line = bufferedReader.readLine;
+        line != null
       }) {
         line = line.trim
 
         if (line.contains(",")) {
           // Subnet range
-          logger.info("Adding IP addresses from subnet " + line + " in anonymization list.")
+          logger.info("Adding IPv4 addresses from subnet " + line + " in anonymization list.")
 
           val startIp = line.split(",")(0)
           val lastIp = line.split(",")(1)
-          val ipPrefix = startIp.split("\\.")(0) + "." + startIp.split("\\.")(1) + "." + startIp.split("\\.")(2) + "."
+          
+          if(!Utils.isIpv6(startIp) && !Utils.isIpv6(lastIp)) {
+            val ipPrefix = startIp.split("\\.")(0) + "." + startIp.split("\\.")(1) + "." + startIp.split("\\.")(2) + "."
 
-          val startIpLastOctad = startIp.split("\\.")(3).toInt
-          val lastIpLastOctad = lastIp.split("\\.")(3).toInt
+            val startIpLastOctad = startIp.split("\\.")(3).toInt
+            val lastIpLastOctad = lastIp.split("\\.")(3).toInt
 
-          if (startIpLastOctad <= lastIpLastOctad) for (i <- startIpLastOctad to lastIpLastOctad) {
-            ipBucket.add(ipPrefix + Integer.toString(i))
-          }
-          else for (i <- lastIpLastOctad to startIpLastOctad) {
-            ipBucket.add(ipPrefix + Integer.toString(i))
+            if (startIpLastOctad <= lastIpLastOctad) for (i <- startIpLastOctad to lastIpLastOctad) {
+              ipBucket.add(ipPrefix + Integer.toString(i))
+            }
+            else for (i <- lastIpLastOctad to startIpLastOctad) {
+              ipBucket.add(ipPrefix + Integer.toString(i))
+            }
           }
         }
         else if (line.contains("/")) {
           // Subnet with mask
-          logger.info("Adding IP addresses from subnet " + line + " in anonymization list.")
+          logger.info("Adding IPv4 addresses from subnet " + line + " in anonymization list.")
 
-          val utils = new SubnetUtils(line)
-          utils.getInfo.getAllAddresses.foreach( ipAddr  => {
-            ipBucket.add(ipAddr)
-          })
+          val subnetBase: String = line.split("/")(0)
+          if(!Utils.isIpv6(subnetBase)) {
+            val utils = new SubnetUtils(line)
+            utils.getInfo.getAllAddresses.foreach( ipAddr  => {
+              ipBucket.add(ipAddr)
+            })
+          }
         }
         else {
           // Single IP address
-          logger.info("Adding IP address " + line + " in anonymization list.")
+          logger.info("Adding IPv4 address " + line + " in anonymization list.")
 
-          ipBucket.add(line)
+          if(!Utils.isIpv6(line)) {
+            ipBucket.add(line)
+          }
         }
       }
     } catch {
@@ -151,6 +167,64 @@ class Utils (appConfigFile: String, ipAnonymizeFile: String, kafkaMessageSchemaF
           ipBucket.add("192.168.1." + Integer.toString(i))
           ipBucket.add("10.0.19." + Integer.toString(i))
         }
+    }
+    ipBucket
+  }
+
+  /**
+   * Load a file with IPv6 subnets to be anonymized and add them to a list. During anonymization will be checked if an IP belongs to any of these subnets or not.
+   *
+   * @param ipListFilename String Path of the name, which contains all IP subnets for anonymization.
+   * @return HashSet[String] Contains all IP addresses in the loaded subnets. These will be anonymized if found.
+   */
+  def loadIpV6List(ipListFilename: String): util.HashSet[String] = {
+    logger.info("Loading list with IPv6 addresses that will be anonymized during preprocessing stage from file " + ipListFilename + ".")
+
+    val ipBucket: util.HashSet[String] = new util.HashSet[String]
+    try {
+      ipBucket.clear()
+
+      var line: String = null
+      val bufferedReader: BufferedReader = new BufferedReader(new FileReader(new File(ipListFilename)))
+      while ({
+        line = bufferedReader.readLine; line != null
+      }) {
+        line = line.trim
+
+        if (line.contains(",")) {
+          // Subnet range
+          logger.info("Adding IPv6 addresses from subnet " + line + " in anonymization list.")
+
+          val startIp = line.split(",")(0)
+          val lastIp = line.split(",")(1)
+
+          if(Utils.isIpv6(startIp) && Utils.isIpv6(lastIp)) {
+              ipBucket.add(line)
+          }
+        }
+        else if (line.contains("/")) {
+          // Subnet with mask
+          logger.info("Adding IPv6 addresses from subnet " + line + " in anonymization list.")
+
+          val subnetBase: String = line.split("/")(0)
+          if(Utils.isIpv6(subnetBase)) {
+            ipBucket.add(line)
+          }
+        }
+        else {
+          // Single IP address
+          logger.info("Adding IPv6 address " + line + " in anonymization list.")
+
+          if(Utils.isIpv6(line)) {
+            ipBucket.add(line)
+          }
+        }
+      }
+    } catch {
+      case e: IOException =>
+        logger.error("IOException. Cannot load file " + ipListFilename + ", that contains IPv6 to anonymize.")
+        logger.error(e.getCause)
+        logger.error(e.getMessage)
     }
     ipBucket
   }
@@ -188,7 +262,7 @@ class Utils (appConfigFile: String, ipAnonymizeFile: String, kafkaMessageSchemaF
   /**
    * Load columns' indexes, that must search for IP addresses that may need anonymization.
    *
-   * @param schema HashMap[String, Integer] An object describing the netflow csv records schema (from loadCsvSchema).
+   * @param schema   HashMap[String, Integer] An object describing the netflow csv records schema (from loadCsvSchema).
    * @param colNames Array[String] An array containing all column names, that indexes must be found.
    * @return Array[Int] An array, which contains indexes of all columns that must be anonymized.
    */
@@ -221,6 +295,16 @@ class Utils (appConfigFile: String, ipAnonymizeFile: String, kafkaMessageSchemaF
   }
 
   /**
+   * Returns a HashSet with all IPv6 address that need anonymization.
+   *
+   * @return HashSet[String] Contains all IPv6 addresses for anonymization.
+   */
+  def getIpsV6(): util.HashSet[String] = {
+    // Get list of IPs (v6) to anonymize
+    this.ipV6ToAnonymize
+  }
+
+  /**
    * Returns csv columns order of Kafka messages' value.
    *
    * @return HashMap[String, Integer] An object describing the netflow csv records schema.
@@ -238,5 +322,63 @@ class Utils (appConfigFile: String, ipAnonymizeFile: String, kafkaMessageSchemaF
   def getColsToAnonymize(): Array[Int] = {
     // Get list of columns, that contain IP addresses to be anonymized
     this.colIndexesToAnonymize
+  }
+}
+
+/**
+ * Static methods
+ */
+object Utils {
+  /**
+   * Returns if an IP is v6 or not. If it is not IPv6, it will be IPv4.
+   * 
+   * @param ipAddress String The IP address to check if it is IPv6 or not.
+   * @return Boolean If the requested IP is IPv6
+   */
+  def isIpv6(ipAddress: String): Boolean = {
+    val ipV6Pattern: Regex = "(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))".r
+    // ipV6Pattern.matches(ipAddress.stripMargin)
+    return ipV6Pattern.findAllIn(ipAddress.stripMargin).size > 0
+  }
+
+  /**
+   * Returns if an IPv6 is in specific range to be anonymized or not. If requested IP is not IPv6
+   * false will be returned.
+   * 
+   * @param ipAddress String The IPv6 address to check if it is in subnet or not.
+   * @param ipv6Set HashSet[String] A Hashset containing all IPv6 subnets to be anonymized.
+   * @return Boolean If the requested IPv6 is in range or not.
+   */
+  def inIpv6Range(ipAddress: String, ipv6Set: util.HashSet[String]): Boolean = {
+    if(!isIpv6(ipAddress)) {
+      return false;
+    }
+
+    val iterator: util.Iterator[String] = ipv6Set.iterator()
+    while(iterator.hasNext()) {
+      val line: String = iterator.next()
+
+      if (line.contains(",")) {
+        println("Check subnet range: " + line)
+        val range: IPv6AddressRange = IPv6AddressRange.fromFirstAndLast(
+          IPv6Address.fromString(line.split(",")(0)),
+          IPv6Address.fromString(line.split(",")(1))
+        )
+        return range.contains(IPv6Address.fromString(ipAddress))
+      }
+      else if(line.contains("/")) {
+        println("Check subnet: " + line)
+        val ipAddressMatcher: IpAddressMatcher = new IpAddressMatcher(line)
+        return ipAddressMatcher.matches(ipAddress)
+      }
+      else {
+        println("Check single IP: " + line)
+        if(isIpv6(line)) {
+          return ipAddress.trim().equalsIgnoreCase(line.trim())
+        }
+        return false
+      }
+    }
+    return false
   }
 }

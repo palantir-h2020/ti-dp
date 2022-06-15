@@ -94,6 +94,12 @@
             <artifactId>spark-sql_2.12</artifactId>
             <version>3.1.2</version>
         </dependency>
+        <!-- Apache Spark ML Lib -->
+        <dependency>
+            <groupId>org.apache.spark</groupId>
+            <artifactId>spark-mllib_2.12</artifactId>
+            <version>3.1.2</version>
+        </dependency>
         <!-- Apache Spark Structured Streaming Kafka -->
         <dependency>
             <groupId>org.apache.spark</groupId>
@@ -148,6 +154,25 @@
             <groupId>org.scalaj</groupId>
             <artifactId>scalaj-http_2.12</artifactId>
             <version>2.4.2</version>
+        </dependency>
+        <!-- Spring Security Web -->
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-web</artifactId>
+            <version>5.6.3</version>
+        </dependency>
+        <!-- Google Java IPv6 -->
+        <dependency>
+            <groupId>com.googlecode.java-ipv6</groupId>
+            <artifactId>java-ipv6</artifactId>
+            <version>0.17</version>
+        </dependency>
+        <!-- JavaX Servlet API -->
+        <dependency>
+            <groupId>javax.servlet</groupId>
+            <artifactId>javax.servlet-api</artifactId>
+            <version>4.0.1</version>
+            <scope>provided</scope>
         </dependency>
     </dependencies>
 </project>

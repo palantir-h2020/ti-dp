@@ -5,22 +5,21 @@ package netflow.utils
  * HTTP request. The body represents an object, that will be converted in JSON format. The
  * following JSON keys will exist in this JSON: obfuscatedIp, originalIp, result, execution_time.
  *
- * @param obfuscatedIp String The obfuscated IP address, after anonymization process.
- * @param originalIp String The original IP address, that was sent for anonymization.
- * @param result String Status of the query. For example "success" or "error".
+ * @param obfuscatedIp   String The obfuscated IP address, after anonymization process.
+ * @param originalIp     String The original IP address, that was sent for anonymization.
+ * @param result         String Status of the query. For example "success" or "error".
  * @param execution_time Float Time needed (in seconds) for executing the anonymization query.
- *
  * @author Space Hellas S.A.
  * @version 1.0-SNAPSHOT
  * @since 1.0-SNAPSHOT
  */
 @SerialVersionUID(104L)
-class ResponseBody (
-                     private var obfuscatedIp: String,
-                     private var originalIp: String,
-                     private var result: String,
-                     private var execution_time: Float,
-                   ) extends Serializable {
+class ResponseBody(
+                    private var obfuscatedIp: String,
+                    private var originalIp: String,
+                    private var result: String,
+                    private var execution_time: Float,
+                  ) extends Serializable {
 
   /**
    * Getter for the obfuscatedIp param.
@@ -30,6 +29,7 @@ class ResponseBody (
   def getObfuscatedIp(): String = {
     return obfuscatedIp
   }
+
   /**
    * Getter for the originalIp param.
    *
@@ -38,6 +38,7 @@ class ResponseBody (
   def getOriginalIp(): String = {
     return originalIp
   }
+
   /**
    * Getter for the result param.
    *
@@ -46,6 +47,7 @@ class ResponseBody (
   def getResult(): String = {
     return result
   }
+
   /**
    * Getter for the execution_time param.
    *

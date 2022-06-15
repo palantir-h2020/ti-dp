@@ -1,12 +1,12 @@
 package spark
 
 import com.google.gson.Gson
-import logger.Logger
+import customLogger.CustomLogger
+import netflow.utils.{RequestBody, ResponseBody, Utils}
 import org.apache.spark.sql.functions.udf
-import netflow.utils.{RequestBody, ResponseBody}
 import scalaj.http.{Http, HttpOptions}
 
-import java.io.{FileWriter}
+import java.io.FileWriter
 
 /**
  * NetflowPreprocessingFunctions class. Contains all methods that will be
@@ -26,7 +26,7 @@ class NetflowPreprocessingFunctions() extends Serializable {
   /**
    * Logger instance
    */
-  val logger = new Logger()
+  val logger = new CustomLogger()
 
   /**
    * Index of column ipkt in netflow data.
@@ -78,52 +78,89 @@ class NetflowPreprocessingFunctions() extends Serializable {
    *
    * @param anonymizationEndpoint String Anonymization service endpoint, where the HTTP request will be sent.
    *                              This must be in format http://IP:PORT/anonymize.
-   * @param colsIdxToAnonymize Array[Int] An array containing all indexes of columns that their values must be
-   *                           sent for anonymization.
-   * @param ipList HashSet[String] A set containing all IP addresses that must be anonymized. This is created after
-   *               loading ip-anonymize.txt file which contains all subnets that their IPs must be anonymized. From
-   *               these subnets, a HashSet of all IP addresses has been created and loaded.
-   * @param isBenchmarkEnabled Boolean Defines if the app is running in benchmark mode or not. If it is running in
-   *                           benchmark mode, anonymization service responds will be dumped in a file,
-   *                           named benchmark.txt, for analysis.
+   * @param colsIdxToAnonymize    Array[Int] An array containing all indexes of columns that their values must be
+   *                              sent for anonymization.
+   * @param ipList                HashSet[String] A set containing all IP addresses that must be anonymized. This is created after
+   *                              loading ip-anonymize.txt file which contains all subnets that their IPs must be anonymized. From
+   *                              these subnets, a HashSet of all IP addresses has been created and loaded.
+   * @param isBenchmarkEnabled    Boolean Defines if the app is running in benchmark mode or not. If it is running in
+   *                              benchmark mode, anonymization service responds will be dumped in a file,
+   *                              named benchmark.txt, for analysis.
    * @return String The input netflow record, but with the required IP addresses replaced with the obfuscated ones.
    */
-  def anonymizeRecord(anonymizationEndpoint: String, colsIdxToAnonymize: Array[Int], ipList: java.util.HashSet[String], isBenchmarkEnabled: Boolean) = udf ((kafkaRecord: String) => {
+  def anonymizeRecord(anonymizationEndpoint: String, colsIdxToAnonymize: Array[Int], ipList: java.util.HashSet[String], ipV6List: java.util.HashSet[String], isBenchmarkEnabled: Boolean) = udf ((kafkaRecord: String) => {
     val recordCols = kafkaRecord.split(",")
     colsIdxToAnonymize.foreach(colIdx => {
       val col = recordCols(colIdx).trim
 
-      // Check if this IP must be anonymized
-      if(ipList.contains(col)) {
-        // Create a Request object and convert it to JSON object
-        val reqBody = new RequestBody(col)
-        val reqBodyJson = new Gson().toJson(reqBody)
+      // Check if IP is v6 or v4
+      if(Utils.isIpv6(col)) {
+        // Check if this IP must be anonymized
+        if(Utils.inIpv6Range(col, ipV6List)) {
+          // Create a Request object and convert it to JSON object
+          val reqBody = new RequestBody(col)
+          val reqBodyJson = new Gson().toJson(reqBody)
 
-        val anonymizeRoute = anonymizationEndpoint
-        // Create and send HTTP request object
-        val response = Http(anonymizeRoute)
-          .postData(reqBodyJson)
-          .header("Content-Type", "application/json")
-          .header("Charset", "UTF-8")
-          .option(HttpOptions.readTimeout(10000)).asString
+          val anonymizeRoute = anonymizationEndpoint
+          // Create and send HTTP request object
+          val response = Http(anonymizeRoute)
+            .postData(reqBodyJson)
+            .header("Content-Type", "application/json")
+            .header("Charset", "UTF-8")
+            .option(HttpOptions.readTimeout(10000)).asString
 
-        // Get Response
-        val resCode = response.code
-        val resContent = response.body
+          // Get Response
+          val resCode = response.code
+          val resContent = response.body
 
-        // Save response to file, if in benchmark mode.
-        if(isBenchmarkEnabled) {
-          val fw = new FileWriter("benchmark.txt", true)
-          try {
-            fw.write(resContent + " " + resCode + "\n")
+          // Save response to file, if in benchmark mode.
+          if(isBenchmarkEnabled) {
+            val fw = new FileWriter("benchmark.txt", true)
+            try {
+              fw.write(resContent + " " + resCode + "\n")
+            }
+            finally fw.close()
           }
-          finally fw.close()
+
+          val gson = new Gson
+          val resContentJson = gson.fromJson(resContent, classOf[ResponseBody])
+
+          recordCols(colIdx) = resContentJson.getObfuscatedIp().trim
         }
+      }
+      else {
+        // Check if this IP must be anonymized
+        if (ipList.contains(col)) {
+          // Create a Request object and convert it to JSON object
+          val reqBody = new RequestBody(col)
+          val reqBodyJson = new Gson().toJson(reqBody)
 
-        val gson = new Gson
-        val resContentJson = gson.fromJson(resContent, classOf[ResponseBody])
+          val anonymizeRoute = anonymizationEndpoint
+          // Create and send HTTP request object
+          val response = Http(anonymizeRoute)
+            .postData(reqBodyJson)
+            .header("Content-Type", "application/json")
+            .header("Charset", "UTF-8")
+            .option(HttpOptions.readTimeout(10000)).asString
 
-        recordCols(colIdx) = resContentJson.getObfuscatedIp().trim
+          // Get Response
+          val resCode = response.code
+          val resContent = response.body
+
+          // Save response to file, if in benchmark mode.
+          if (isBenchmarkEnabled) {
+            val fw = new FileWriter("benchmark.txt", true)
+            try {
+              fw.write(resContent + " " + resCode + "\n")
+            }
+            finally fw.close()
+          }
+
+          val gson = new Gson
+          val resContentJson = gson.fromJson(resContent, classOf[ResponseBody])
+
+          recordCols(colIdx) = resContentJson.getObfuscatedIp().trim
+        }
       }
     })
     val anonymizedRecord = recordCols.mkString(",")
@@ -160,7 +197,7 @@ class NetflowPreprocessingFunctions() extends Serializable {
    *
    * @return Netflow record, with the new created features added in the right of the old columns.
    */
-  def preprocessRecord() = udf ((kafkaRecord: String) => {
+  def preprocessRecord() = udf((kafkaRecord: String) => {
     // Split record from kafka
     var recordCols = kafkaRecord.split(",")
 
@@ -172,7 +209,7 @@ class NetflowPreprocessingFunctions() extends Serializable {
     // Preprocessing Function #2: Check if destination port is a port used from common services or not.
     // False: 0, True: 1
     var isCommonPort = 0
-    if(commonPorts.contains(recordCols(dstPortIdx).trim.toInt)) {
+    if (commonPorts.contains(recordCols(dstPortIdx).trim.toInt)) {
       isCommonPort = 1
     }
 
@@ -184,16 +221,16 @@ class NetflowPreprocessingFunctions() extends Serializable {
     var isProtIGMP = 0
     var isProtOther = 0
 
-    if(recordCols(protocolIdx).trim.equalsIgnoreCase("TCP")) {
+    if (recordCols(protocolIdx).trim.equalsIgnoreCase("TCP")) {
       isProtTCP = 1
     }
-    else if(recordCols(protocolIdx).trim.equalsIgnoreCase("UDP")) {
+    else if (recordCols(protocolIdx).trim.equalsIgnoreCase("UDP")) {
       isProtUDP = 1
     }
-    else if(recordCols(protocolIdx).trim.equalsIgnoreCase("ICMP")) {
+    else if (recordCols(protocolIdx).trim.equalsIgnoreCase("ICMP")) {
       isProtICMP = 1
     }
-    else if(recordCols(protocolIdx).trim.equalsIgnoreCase("IGMP")) {
+    else if (recordCols(protocolIdx).trim.equalsIgnoreCase("IGMP")) {
       isProtIGMP = 1
     }
     else {
@@ -209,27 +246,27 @@ class NetflowPreprocessingFunctions() extends Serializable {
     var flgHasP = 0
     var flgHasU = 0
 
-    if(recordCols(tcpFlagsIdx).trim.toUpperCase.contains("A") ||
+    if (recordCols(tcpFlagsIdx).trim.toUpperCase.contains("A") ||
       recordCols(tcpFlagsIdx).trim.toUpperCase.contains("X")) {
       flgHasA = 1
     }
-    if(recordCols(tcpFlagsIdx).trim.toUpperCase.contains("S") ||
+    if (recordCols(tcpFlagsIdx).trim.toUpperCase.contains("S") ||
       recordCols(tcpFlagsIdx).trim.toUpperCase.contains("X")) {
       flgHasS = 1
     }
-    if(recordCols(tcpFlagsIdx).trim.toUpperCase.contains("F") ||
+    if (recordCols(tcpFlagsIdx).trim.toUpperCase.contains("F") ||
       recordCols(tcpFlagsIdx).trim.toUpperCase.contains("X")) {
       flgHasF = 1
     }
-    if(recordCols(tcpFlagsIdx).trim.toUpperCase.contains("R") ||
+    if (recordCols(tcpFlagsIdx).trim.toUpperCase.contains("R") ||
       recordCols(tcpFlagsIdx).trim.toUpperCase.contains("X")) {
       flgHasR = 1
     }
-    if(recordCols(tcpFlagsIdx).trim.toUpperCase.contains("P") ||
+    if (recordCols(tcpFlagsIdx).trim.toUpperCase.contains("P") ||
       recordCols(tcpFlagsIdx).trim.toUpperCase.contains("X")) {
       flgHasP = 1
     }
-    if(recordCols(tcpFlagsIdx).trim.toUpperCase.contains("U") ||
+    if (recordCols(tcpFlagsIdx).trim.toUpperCase.contains("U") ||
       recordCols(tcpFlagsIdx).trim.toUpperCase.contains("X")) {
       flgHasU = 1
     }

@@ -6,13 +6,12 @@ package netflow.utils
  * The only field in the JSON is a string with the key IpAddr.
  *
  * @param IpAddr String The IP address to be sent for anonymization.
- *
  * @author Space Hellas S.A.
  * @version 1.0-SNAPSHOT
  * @since 1.0-SNAPSHOT
  */
 @SerialVersionUID(103L)
-class RequestBody (private var IpAddr: String) extends Serializable {
+class RequestBody(private var IpAddr: String) extends Serializable {
 
   /**
    * Getter for the IpAddr param.

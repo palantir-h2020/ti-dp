@@ -1,9 +1,9 @@
 package netflow
 
-import logger.Logger
+import customLogger.CustomLogger
+import netflow.utils.Utils
 import org.apache.spark.sql.SparkSession
 import spark.NetflowPreprocessingFunctions
-import netflow.utils.Utils
 
 /**
  * NetflowPreprocessingMain class. Empty class.
@@ -35,7 +35,7 @@ object NetflowPreprocessing {
   /**
    * Logger instance.
    */
-  val logger = new Logger()
+  val logger = new CustomLogger()
 
   /**
    * Main method of NetflowPreprocessing object. It loads all required configuration and info from
@@ -49,7 +49,7 @@ object NetflowPreprocessing {
    */
   def main(args: Array[String]): Unit = {
     var configFilename = "netflow-preprocessing.properties"
-    if(args.length >= 1) {
+    if (args.length >= 1) {
       configFilename = args(0)
     }
 
@@ -62,6 +62,7 @@ object NetflowPreprocessing {
 
     val appProps = utils.getAppProps()
     val ipList = utils.getIps()
+    val ipV6List = utils.getIpsV6()
     val colsToAnonymize = utils.getColsToAnonymize()
 
     logger.info("Running app in benchmark mode: " + appProps.getProperty("benchmark.enabled"))
@@ -81,7 +82,7 @@ object NetflowPreprocessing {
       .readStream
       .format("kafka")
       .option("kafka.bootstrap.servers",
-        appProps.getProperty("kafka.broker.ip")+":"+appProps.getProperty("kafka.broker.port"))
+        appProps.getProperty("kafka.broker.ip") + ":" + appProps.getProperty("kafka.broker.port"))
       .option("failOnDataLoss", false)
       .option("subscribe", appProps.getProperty("kafka.topic.input"))
       .option("startingOffsets", "latest")
@@ -92,12 +93,12 @@ object NetflowPreprocessing {
     // Preprocess and write back to Kafka topics
     val anonymizeQuery = inputDf
       .withColumn("value", preprocessingFunctions.anonymizeRecord(
-        appProps.getProperty("anonymization.endpoint"), colsToAnonymize, ipList, appProps.getProperty("benchmark.enabled").toBoolean)('value))
+        appProps.getProperty("anonymization.endpoint"), colsToAnonymize, ipList, ipV6List, appProps.getProperty("benchmark.enabled").toBoolean)('value))
       .writeStream
       .queryName("Anonymization Kafka Stream")
       .format("kafka")
       .option("kafka.bootstrap.servers",
-          appProps.getProperty("kafka.broker.ip")+":"+appProps.getProperty("kafka.broker.port"))
+        appProps.getProperty("kafka.broker.ip") + ":" + appProps.getProperty("kafka.broker.port"))
       .option("topic", kafkaTopics(0))
       .option("checkpointLocation", "./checkpoint/anonymize-query")
       .start()
@@ -108,20 +109,20 @@ object NetflowPreprocessing {
       .queryName("Preprocessing Kafka Stream")
       .format("kafka")
       .option("kafka.bootstrap.servers",
-          appProps.getProperty("kafka.broker.ip")+":"+appProps.getProperty("kafka.broker.port"))
+        appProps.getProperty("kafka.broker.ip") + ":" + appProps.getProperty("kafka.broker.port"))
       .option("topic", kafkaTopics(1))
       .option("checkpointLocation", "./checkpoint/preprocess-query")
       .start()
 
     val anonymizePreprocessQuery = inputDf
       .withColumn("value", preprocessingFunctions.anonymizeRecord(
-        appProps.getProperty("anonymization.endpoint"), colsToAnonymize, ipList, appProps.getProperty("benchmark.enabled").toBoolean)('value))
+        appProps.getProperty("anonymization.endpoint"), colsToAnonymize, ipList, ipV6List, appProps.getProperty("benchmark.enabled").toBoolean)('value))
       .withColumn("value", preprocessingFunctions.preprocessRecord()('value))
       .writeStream
       .queryName("Anonymization & Preprocessing Kafka Stream")
       .format("kafka")
       .option("kafka.bootstrap.servers",
-          appProps.getProperty("kafka.broker.ip")+":"+appProps.getProperty("kafka.broker.port"))
+        appProps.getProperty("kafka.broker.ip") + ":" + appProps.getProperty("kafka.broker.port"))
       .option("topic", kafkaTopics(2))
       .option("checkpointLocation", "./checkpoint")
       .start()
